@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOM Tracker - Capture Photo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 18px;
+      background: #1b1533;
+      color: #fff;
+      text-align: center;
+      min-height: 100vh;
+    }
+    h2 { margin: 0 0 14px 0; font-size: 18px; font-weight: 600; }
+    #video-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 380px;
+      margin: 0 auto;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 3px solid #7c3aed;
+      background: #000;
+      min-height: 220px;
+    }
+    video { width: 100%; display: block; }
+    canvas { display: none; }
+    #status { margin: 14px 0; font-size: 14px; color: #c9c3f5; min-height: 20px; }
+    #status.err { color: #ff8a8a; font-weight: 600; }
+    .btns { margin-top: 16px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .primary { background: linear-gradient(135deg, #4361ee 0%, #7c3aed 100%); color: #fff; }
+    .secondary { background: #342a5c; color: #e9e6ff; }
+    select { margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: none; font-size: 14px; max-width: 340px; }
+    #preview-img { width: 100%; max-width: 380px; border-radius: 14px; display: none; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h2>📸 BOM Tracker — Capture Photo</h2>
+  <div id="video-wrap">
+    <video id="video" autoplay playsinline></video>
+  </div>
+  <img id="preview-img">
+  <canvas id="canvas"></canvas>
+  <div><select id="deviceSelect" style="display:none;"></select></div>
+  <div id="status">Requesting camera access…</div>
+  <div class="btns" id="live-btns">
+    <button class="primary" id="btn-capture" onclick="capture()" disabled>Capture</button>
+    <button class="secondary" onclick="closeWin()">Cancel</button>
+  </div>
+  <div class="btns" id="confirm-btns" style="display:none;">
+    <button class="primary" onclick="sendPhoto()">✅ Use This Photo</button>
+    <button class="secondary" onclick="retake()">↺ Retake</button>
+  </div>
+
+<script>
+  var stream = null;
+  var video = document.getElementById('video');
+  var canvas = document.getElementById('canvas');
+  var statusEl = document.getElementById('status');
+  var deviceSelect = document.getElementById('deviceSelect');
+  var capturedDataUrl = null;
+
+  function setStatus(msg, isErr) {
+    statusEl.textContent = msg;
+    statusEl.className = isErr ? 'err' : '';
+  }
+
+  function startStream(deviceId) {
+    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); }
+    var constraints = { video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false };
+    navigator.mediaDevices.getUserMedia(constraints).then(function(s) {
+      stream = s;
+      video.srcObject = s;
+      setStatus('Camera ready. Click Capture.');
+      document.getElementById('btn-capture').disabled = false;
+      return navigator.mediaDevices.enumerateDevices();
+    }).then(function(devices) {
+      if (!devices) return;
+      var cams = devices.filter(function(d){ return d.kind === 'videoinput'; });
+      if (cams.length > 1) {
+        deviceSelect.style.display = 'inline-block';
+        deviceSelect.innerHTML = '';
+        cams.forEach(function(c, i) {
+          var opt = document.createElement('option');
+          opt.value = c.deviceId;
+          opt.textContent = c.label || ('Camera ' + (i + 1));
+          deviceSelect.appendChild(opt);
+        });
+      } else {
+        deviceSelect.style.display = 'none';
+      }
+    }).catch(function(err) {
+      setStatus('Camera error: ' + err.name + ' — ' + err.message, true);
+    });
+  }
+
+  deviceSelect.addEventListener('change', function() {
+    startStream(deviceSelect.value);
+  });
+
+  function capture() {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    var now = new Date();
+    var label = now.toLocaleString();
+    ctx.font = Math.max(16, Math.round(canvas.width / 24)) + 'px Arial';
+    var textW = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(8, canvas.height - 38, textW + 16, 30);
+    ctx.fillStyle = 'yellow';
+    ctx.fillText(label, 16, canvas.height - 15);
+    capturedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+    document.getElementById('preview-img').src = capturedDataUrl;
+    document.getElementById('preview-img').style.display = 'block';
+    document.getElementById('video-wrap').style.display = 'none';
+    document.getElementById('live-btns').style.display = 'none';
+    document.getElementById('confirm-btns').style.display = 'flex';
+    deviceSelect.style.display = 'none';
+    setStatus('Photo captured with date/time stamp.');
+  }
+
+  function retake() {
+    capturedDataUrl = null;
+    document.getElementById('preview-img').style.display = 'none';
+    document.getElementById('video-wrap').style.display = 'block';
+    document.getElementById('live-btns').style.display = 'flex';
+    document.getElementById('confirm-btns').style.display = 'none';
+    setStatus('Camera ready. Click Capture.');
+  }
+
+  function sendPhoto() {
+    if (!capturedDataUrl) return;
+    var params = new URLSearchParams(window.location.search);
+    var payload = {
+      type: 'bomTrackerCapture',
+      selectionId: params.get('sel'),
+      mode: params.get('mode'),
+      qty: params.get('qty'),
+      imageData: capturedDataUrl
+    };
+    if (window.opener) {
+      window.opener.postMessage(payload, '*');
+      setStatus('Sent back successfully. Closing...');
+      setTimeout(closeWin, 500);
+    } else {
+      setStatus('Could not find the BOM Tracker tab. Please close this and try again from the app.', true);
+    }
+  }
+
+  function closeWin() {
+    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); }
+    window.close();
+    setTimeout(function() {
+      setStatus('You can close this tab now.');
+    }, 300);
+  }
+
+  startStream(null);
+</script>
+</body>
+</html>
